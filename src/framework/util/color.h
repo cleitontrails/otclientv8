@@ -40,6 +40,7 @@ public:
     Color(int r, int g, int b, int a = 0xFF) : m_r(r/255.0f), m_g(g/255.0f), m_b(b/255.0f), m_a(a/255.0f) { }
     Color(float r, float g, float b, float a = 1.0f) : m_r(r), m_g(g), m_b(b), m_a(a) { }
     Color(const std::string& coltext);
+    Color(const Color&) = default;
 
     uint8 a() const { return 255.0f * m_a; }
     uint8 b() const { return 255.0f * m_b; }
