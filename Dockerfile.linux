@@ -1,0 +1,100 @@
+FROM ubuntu:22.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+  autoconf \
+  automake \
+  build-essential \
+  ca-certificates \
+  cmake \
+  curl \
+  git \
+  gettext \
+  m4 \
+  libtool \
+  libgl1-mesa-dev \
+  libglu1-mesa-dev \
+  libglew-dev \
+  libgl-dev \
+  linux-libc-dev \
+  libx11-dev \
+  libxext-dev \
+  libxi-dev \
+  libxmu-dev \
+  libxrandr-dev \
+  ninja-build \
+  pkg-config \
+  python3 \
+  rsync \
+  unzip \
+  zip \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN git clone https://github.com/microsoft/vcpkg.git /opt/vcpkg \
+  && /opt/vcpkg/bootstrap-vcpkg.sh
+
+ENV VCPKG_ROOT=/opt/vcpkg
+ENV PATH="/opt/vcpkg:${PATH}"
+
+WORKDIR /workspace
+
+RUN cat <<'EOF' > /usr/local/bin/build.sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+SRC=/workspace
+OUT=/workspace/build
+WORK=/workdir
+VCPKG_ROOT=${VCPKG_ROOT:-/opt/vcpkg}
+ENCRYPTION_SEED=${ENCRYPTION_SEED:-default-seed}
+JOBS=${JOBS:-$(nproc)}
+
+rm -rf "$WORK"
+mkdir -p "$WORK/src" "$OUT"
+
+rsync -a --delete --exclude build --exclude .git "$SRC/" "$WORK/src/"
+
+cd "$WORK/src"
+
+echo "Configuring and building Linux version..."
+echo "vcpkg will automatically install dependencies from vcpkg.json"
+cmake -S . -B "$WORK/build-linux" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+    -DVCPKG_TARGET_TRIPLET=x64-linux \
+    -DUSE_STATIC_LIBS=OFF \
+    -DFRAMEWORK_SOUND=OFF \
+    -DFRAMEWORK_GRAPHICS=ON \
+    -DFRAMEWORK_NET=ON \
+    -DFRAMEWORK_XML=ON
+
+cmake --build "$WORK/build-linux" -- -j"$JOBS"
+
+echo "Encrypting data..."
+"$WORK/build-linux/otclient" --encrypt "$ENCRYPTION_SEED"
+
+echo "Creating data.zip..."
+rm -f "$WORK/src/data.zip"
+zip_inputs=("data" "modules" "init.lua")
+if [ -d "$WORK/src/mods" ]; then zip_inputs+=("mods"); fi
+if [ -d "$WORK/src/layouts" ]; then zip_inputs+=("layouts"); fi
+(cd "$WORK/src" && zip -9 -qr "data.zip" "${zip_inputs[@]}")
+
+echo "Packaging Linux build..."
+rm -rf "$OUT/linux"
+mkdir -p "$OUT/linux"
+
+cp "$WORK/build-linux/otclient" "$OUT/linux/"
+cp "$WORK/src/data.zip" "$OUT/linux/"
+
+(cd "$OUT/linux" && zip -9 -qr ../otclientv8-linux.zip .)
+
+echo "Build complete. Artifacts in $OUT/linux"
+ls -lh "$OUT"
+EOF
+
+RUN chmod +x /usr/local/bin/build.sh
+
+ENTRYPOINT ["/usr/local/bin/build.sh"]

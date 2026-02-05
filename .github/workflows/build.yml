@@ -1,0 +1,69 @@
+name: Build OTClient
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  ENCRYPTION_SEED: ${{ secrets.ENCRYPTION_SEED || 'default-seed' }}
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Linux version
+        run: |
+          docker build -f Dockerfile.linux -t otclient-linux .
+          docker run --rm -v $PWD:/workspace otclient-linux
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: otclientv8-linux
+          path: build/otclientv8-linux.zip
+
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Install vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+          C:\vcpkg\bootstrap-vcpkg.bat
+          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+
+      - name: Install dependencies
+        run: |
+          C:\vcpkg\vcpkg.exe install --triplet x64-windows
+
+      - name: Build
+        run: |
+          cmake -S . -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DUSE_STATIC_LIBS=OFF
+          cmake --build build --config Release
+
+      - name: Package
+        run: |
+          mkdir -p release
+          cp build/otclient.exe release/
+          cp vcpkg_installed/x64-windows/bin/*.dll release/
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: otclientv8-windows
+          path: release/

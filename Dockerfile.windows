@@ -1,0 +1,68 @@
+# escape=`
+FROM mcr.microsoft.com/windows/servercore:ltsc2022
+
+SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+# Install Chocolatey
+RUN Set-ExecutionPolicy Bypass -Scope Process -Force; `
+  [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; `
+  iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+
+# Install build tools
+RUN choco install -y git cmake ninja visualstudio2022buildtools visualstudio2022-workload-vctools
+
+# Install vcpkg
+RUN git clone https://github.com/microsoft/vcpkg.git C:\vcpkg; `
+  C:\vcpkg\bootstrap-vcpkg.bat
+
+ENV VCPKG_ROOT=C:\vcpkg
+
+WORKDIR C:\workspace
+
+RUN echo 'param(' > C:\build.ps1; `
+  echo '    [string]$EncryptionSeed = "default-seed"' >> C:\build.ps1; `
+  echo ')' >> C:\build.ps1; `
+  echo '' >> C:\build.ps1; `
+  echo '$ErrorActionPreference = "Stop"' >> C:\build.ps1; `
+  echo '' >> C:\build.ps1; `
+  echo '$SRC = "C:\workspace"' >> C:\build.ps1; `
+  echo '$OUT = "C:\workspace\build"' >> C:\build.ps1; `
+  echo '$WORK = "C:\workdir"' >> C:\build.ps1; `
+  echo '$VCPKG_ROOT = $env:VCPKG_ROOT' >> C:\build.ps1; `
+  echo '$JOBS = $env:NUMBER_OF_PROCESSORS' >> C:\build.ps1; `
+  echo '' >> C:\build.ps1; `
+  echo 'if (Test-Path $WORK) { Remove-Item -Recurse -Force $WORK }' >> C:\build.ps1; `
+  echo 'New-Item -ItemType Directory -Force -Path "$WORK\src" | Out-Null' >> C:\build.ps1; `
+  echo 'New-Item -ItemType Directory -Force -Path $OUT | Out-Null' >> C:\build.ps1; `
+  echo '' >> C:\build.ps1; `
+  echo 'Write-Host "Copying source files..."' >> C:\build.ps1; `
+  echo 'robocopy $SRC "$WORK\src" /E /XD build .git /NFL /NDL /NJH /NJS /nc /ns /np' >> C:\build.ps1; `
+  echo '' >> C:\build.ps1; `
+  echo 'Set-Location "$WORK\src"' >> C:\build.ps1; `
+  echo '' >> C:\build.ps1; `
+  echo 'Write-Host "Installing dependencies..."' >> C:\build.ps1; `
+  echo '& "$VCPKG_ROOT\vcpkg.exe" install --clean-after-build --triplet x64-windows' >> C:\build.ps1; `
+  echo '' >> C:\build.ps1; `
+  echo 'Write-Host "Configuring Windows build..."' >> C:\build.ps1; `
+  echo '& cmake -S . -B "$WORK\build-windows" -G Ninja ```' >> C:\build.ps1; `
+  echo '    -DCMAKE_BUILD_TYPE=Release ```' >> C:\build.ps1; `
+  echo '    -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" ```' >> C:\build.ps1; `
+  echo '    -DVCPKG_TARGET_TRIPLET=x64-windows ```' >> C:\build.ps1; `
+  echo '    -DUSE_STATIC_LIBS=OFF' >> C:\build.ps1; `
+  echo '' >> C:\build.ps1; `
+  echo 'Write-Host "Building Windows version..."' >> C:\build.ps1; `
+  echo '& cmake --build "$WORK\build-windows" --config Release -- -j$JOBS' >> C:\build.ps1; `
+  echo '' >> C:\build.ps1; `
+  echo 'Write-Host "Packaging Windows build..."' >> C:\build.ps1; `
+  echo 'if (Test-Path "$OUT\windows") { Remove-Item -Recurse -Force "$OUT\windows" }' >> C:\build.ps1; `
+  echo 'New-Item -ItemType Directory -Force -Path "$OUT\windows" | Out-Null' >> C:\build.ps1; `
+  echo '' >> C:\build.ps1; `
+  echo 'Copy-Item "$WORK\build-windows\otclient.exe" "$OUT\windows\"' >> C:\build.ps1; `
+  echo '' >> C:\build.ps1; `
+  echo '# Copy runtime DLLs from vcpkg' >> C:\build.ps1; `
+  echo 'Get-ChildItem "$WORK\src\vcpkg_installed\x64-windows\bin\*.dll" | Copy-Item -Destination "$OUT\windows\"' >> C:\build.ps1; `
+  echo '' >> C:\build.ps1; `
+  echo 'Write-Host "Build complete. Artifacts in $OUT\windows"' >> C:\build.ps1; `
+  echo 'Get-ChildItem -Recurse $OUT' >> C:\build.ps1
+
+ENTRYPOINT ["powershell", "-File", "C:\\build.ps1"]
