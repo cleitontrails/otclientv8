@@ -55,6 +55,11 @@ function updateFeatures(version)
 
     if(version >= 860) then
         g_game.enableFeature(GameAttackSeq)
+        -- Required for 15.x-downgraded-to-8.60 assets
+        g_game.enableFeature(GameSpritesU32)
+        g_game.enableFeature(GameEnhancedAnimations)
+        g_game.enableFeature(GameIdleAnimations)
+        g_game.enableFeature(GamePlayerMounts)  -- Enable if your server supports mounts
     end
 
     if(version >= 862) then
